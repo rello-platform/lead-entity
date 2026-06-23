@@ -175,3 +175,21 @@ export function shouldRequireSkipTrace(input: {
   }
   return !input.hasContactHuman;
 }
+
+// Shape-based contact-field normalizer (Self-Healing Import Validation, Layer 2).
+// Re-exported from the root for discoverability; the canonical subpath is
+// `@rello-platform/lead-entity/normalize` (mirrors `./contracts`). See
+// `src/normalize.ts` for the W-01 two-sided safety rule.
+export {
+  normalizeContactFields,
+  isEmailShaped,
+  isPhoneShaped,
+  isNeither,
+  EMAIL_SHAPE_REGEX,
+  PHONE_DIGIT_FLOOR,
+  type HealAction,
+  type ContactField,
+  type ValueShape,
+  type NormalizeContactInput,
+  type NormalizeContactResult,
+} from "./normalize";
