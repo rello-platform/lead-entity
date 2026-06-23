@@ -60,4 +60,5 @@ export declare function shouldRequireSkipTrace(input: {
     entityType: EntityType;
     hasContactHuman: boolean;
 }): boolean;
+export { normalizeContactFields, isEmailShaped, isPhoneShaped, isNeither, EMAIL_SHAPE_REGEX, PHONE_DIGIT_FLOOR, type HealAction, type ContactField, type ValueShape, type NormalizeContactInput, type NormalizeContactResult, } from "./normalize";
 //# sourceMappingURL=index.d.ts.map

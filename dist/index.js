@@ -12,7 +12,7 @@
  * Limited Partnership case.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ENTITY_TYPES = void 0;
+exports.PHONE_DIGIT_FLOOR = exports.EMAIL_SHAPE_REGEX = exports.isNeither = exports.isPhoneShaped = exports.isEmailShaped = exports.normalizeContactFields = exports.ENTITY_TYPES = void 0;
 exports.normalizeEntityName = normalizeEntityName;
 exports.classifyEntityType = classifyEntityType;
 exports.shouldRequireSkipTrace = shouldRequireSkipTrace;
@@ -137,3 +137,14 @@ function shouldRequireSkipTrace(input) {
     }
     return !input.hasContactHuman;
 }
+// Shape-based contact-field normalizer (Self-Healing Import Validation, Layer 2).
+// Re-exported from the root for discoverability; the canonical subpath is
+// `@rello-platform/lead-entity/normalize` (mirrors `./contracts`). See
+// `src/normalize.ts` for the W-01 two-sided safety rule.
+var normalize_1 = require("./normalize");
+Object.defineProperty(exports, "normalizeContactFields", { enumerable: true, get: function () { return normalize_1.normalizeContactFields; } });
+Object.defineProperty(exports, "isEmailShaped", { enumerable: true, get: function () { return normalize_1.isEmailShaped; } });
+Object.defineProperty(exports, "isPhoneShaped", { enumerable: true, get: function () { return normalize_1.isPhoneShaped; } });
+Object.defineProperty(exports, "isNeither", { enumerable: true, get: function () { return normalize_1.isNeither; } });
+Object.defineProperty(exports, "EMAIL_SHAPE_REGEX", { enumerable: true, get: function () { return normalize_1.EMAIL_SHAPE_REGEX; } });
+Object.defineProperty(exports, "PHONE_DIGIT_FLOOR", { enumerable: true, get: function () { return normalize_1.PHONE_DIGIT_FLOOR; } });
