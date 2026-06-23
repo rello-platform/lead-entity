@@ -38,8 +38,28 @@ normalizeEntityName("Bastow Family Ltd Partnership");     // "bastow family lp"
 
 The HH BYOL commit transactional path uses the normalized name as the advisory-lock key (per `LEAD-ENTITY-TYPE.md` Phase 4) and as the `(tenantId, entityNameNormalized)` dedup lookup key, ensuring concurrent uploads of the same partnership across name variants resolve to one Rello `Lead`.
 
+## The `createLead` contact contract (`/contracts` subpath, v0.2.0+)
+
+`@rello-platform/lead-entity/contracts` is the **shared inter-app SOT for the `createLead` CONTACT-shape contract** — the regression-lock for the already-shipped Rello `CONTACT-LESS-LEAD-CREATE-400` fix (Pillar 5 of `PLATFORM-DURABLE-BULK-OPERATION-FRAMEWORK`; Kelly LOCKED 2026-06-19, ANSWERS D2). It is a regression-lock on live behavior, **not** a forward-fix.
+
+```ts
+import {
+  createLeadContactContract, // zod schema: contact + entity-shape slice of createLead
+  tolerantOptionalEmail,     // null/"" → omitted; non-empty non-email → reject
+  tolerantOptionalPhone,     // null/"" → omitted; >20 chars → reject
+  emptyToUndefined,          // the "no value" sentinel collapse
+} from "@rello-platform/lead-entity/contracts";
+```
+
+- **Rello** imports `tolerantOptionalEmail` / `tolerantOptionalPhone` from here and composes them into its full `createLeadSchema` (Rule E — no local redeclare); its `createLead.contract.test.ts` round-trips fixtures through the full schema.
+- **Harvest-Home** constructs `createLead` payloads to this contract and runs a `createLead.contract.test.ts` against a production-anchored fixture corpus (incl. the contact-less entity lead that caused the original 400).
+- Both repos assert: **legitimate fixtures PASS** (the fix stays live) AND **genuinely-invalid input still REJECTS** (the schema didn't go permissive).
+
+`zod` is a `peerDependency` (`^4.0.0`) — consumers already pin zod ^4; the package adds no zod runtime weight of its own. The pure classifier/normalizer surface (above) carries no runtime deps and is unaffected.
+
 ## Versioning
 
+- `0.2.0` — (2026-06-23) add the `/contracts` subpath: shared `createLead` contact contract (`createLeadContactContract` + `tolerantOptionalEmail` / `tolerantOptionalPhone` / `emptyToUndefined`), the regression-lock SOT for the shipped contact-less-lead fix. Adds `zod ^4` as a `peerDependency`. Additive — the pure classifier/normalizer surface is unchanged. 22 new contract fixtures (pass-legit + reject-invalid, both directions).
 - `0.1.0` — initial publish (2026-04-26). Six-member `EntityType`, ordered classifier, normalizer covering LLC / LP / Trust / Inc / Corp suffixes plus `&`/`the`/punctuation rules. 30+ vitest fixtures including the explicit Bastow worked-example.
 
 Future classifier expansions (new suffix patterns, e.g., `B Corp` / `S Corp` / `Foundation` granularity, or non-English entity suffixes) bump minor. Breaking changes to function signatures bump major.
