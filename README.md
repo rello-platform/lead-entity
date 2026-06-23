@@ -59,6 +59,7 @@ import {
 
 ## Versioning
 
+- `0.2.1` — (2026-06-23) robustness patch on the contact preprocessors: `tolerantOptionalEmail` / `tolerantOptionalPhone` gain an OUTER `.optional()`. zod 4.4.x regressed `z.preprocess(fn, inner.optional())` inside a `z.object` to reject an ABSENT key (`expected nonoptional, received undefined`); the outer optional keeps an absent key passing on every zod 4.x consumers run (Rello 4.3.5, HH 4.4.1). Behavior otherwise identical (null/"" → omitted; invalid still rejects) — makes the contact-less-fix invariant version-proof against a future consumer zod bump. Surfaced by HH's producer-side contract test.
 - `0.2.0` — (2026-06-23) add the `/contracts` subpath: shared `createLead` contact contract (`createLeadContactContract` + `tolerantOptionalEmail` / `tolerantOptionalPhone` / `emptyToUndefined`), the regression-lock SOT for the shipped contact-less-lead fix. Adds `zod ^4` as a `peerDependency`. Additive — the pure classifier/normalizer surface is unchanged. 22 new contract fixtures (pass-legit + reject-invalid, both directions).
 - `0.1.0` — initial publish (2026-04-26). Six-member `EntityType`, ordered classifier, normalizer covering LLC / LP / Trust / Inc / Corp suffixes plus `&`/`the`/punctuation rules. 30+ vitest fixtures including the explicit Bastow worked-example.
 

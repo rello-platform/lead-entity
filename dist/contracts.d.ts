@@ -64,7 +64,7 @@ export declare const emptyToUndefined: (v: unknown) => unknown;
  *   - a valid email (`a@b.com`)          → kept, PASS
  *   - a non-empty non-email (`"nope"`)   → REJECT (we do NOT loosen real validation)
  */
-export declare const tolerantOptionalEmail: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+export declare const tolerantOptionalEmail: z.ZodOptional<z.ZodPreprocess<z.ZodOptional<z.ZodString>>>;
 /**
  * Optional ≤20-char phone that tolerates `null` / `""` (→ omitted) while STILL
  * rejecting an over-long value. The exact shape shipped in Rello's
@@ -75,7 +75,7 @@ export declare const tolerantOptionalEmail: z.ZodPreprocess<z.ZodOptional<z.ZodS
  *   - a ≤20-char string (`"8015550142"`) → kept, PASS
  *   - a >20-char string                  → REJECT
  */
-export declare const tolerantOptionalPhone: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+export declare const tolerantOptionalPhone: z.ZodOptional<z.ZodPreprocess<z.ZodOptional<z.ZodString>>>;
 /**
  * `createLeadContactContract` — the shared, inter-app contract for the CONTACT +
  * entity-shape subset of a `createLead` payload. This is the slice of the full
@@ -108,8 +108,8 @@ export declare const tolerantOptionalPhone: z.ZodPreprocess<z.ZodOptional<z.ZodS
 export declare const createLeadContactContract: z.ZodObject<{
     firstName: z.ZodOptional<z.ZodString>;
     lastName: z.ZodOptional<z.ZodString>;
-    email: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
-    phone: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    email: z.ZodOptional<z.ZodPreprocess<z.ZodOptional<z.ZodString>>>;
+    phone: z.ZodOptional<z.ZodPreprocess<z.ZodOptional<z.ZodString>>>;
     entityType: z.ZodOptional<z.ZodEnum<{
         INDIVIDUAL: "INDIVIDUAL";
         LLC: "LLC";

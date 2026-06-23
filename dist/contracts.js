@@ -70,7 +70,18 @@ exports.emptyToUndefined = emptyToUndefined;
  *   - a valid email (`a@b.com`)          → kept, PASS
  *   - a non-empty non-email (`"nope"`)   → REJECT (we do NOT loosen real validation)
  */
-exports.tolerantOptionalEmail = zod_1.z.preprocess(exports.emptyToUndefined, zod_1.z.string().email("Invalid email").optional());
+exports.tolerantOptionalEmail = zod_1.z
+    .preprocess(exports.emptyToUndefined, zod_1.z.string().email("Invalid email").optional())
+    // Outer `.optional()` is load-bearing for cross-zod-minor robustness: in
+    // zod 4.4.x a bare `z.preprocess(fn, inner.optional())` inside a `z.object`
+    // treats the field as REQUIRED when the KEY IS ABSENT (rejects with
+    // `expected nonoptional, received undefined`) — a regression vs zod 4.3.x
+    // where the inner `.optional()` sufficed. The outer `.optional()` makes an
+    // absent key pass on EVERY zod 4.x the consumers run (Rello 4.3.5, HH 4.4.1).
+    // Behavior is otherwise identical: null/"" → omitted; a non-empty non-email
+    // still rejects. This is exactly the contact-less-fix invariant, made
+    // version-proof so a future consumer zod bump can't silently re-break it.
+    .optional();
 /**
  * Optional ≤20-char phone that tolerates `null` / `""` (→ omitted) while STILL
  * rejecting an over-long value. The exact shape shipped in Rello's
@@ -81,7 +92,12 @@ exports.tolerantOptionalEmail = zod_1.z.preprocess(exports.emptyToUndefined, zod
  *   - a ≤20-char string (`"8015550142"`) → kept, PASS
  *   - a >20-char string                  → REJECT
  */
-exports.tolerantOptionalPhone = zod_1.z.preprocess(exports.emptyToUndefined, zod_1.z.string().max(20).optional());
+exports.tolerantOptionalPhone = zod_1.z
+    .preprocess(exports.emptyToUndefined, zod_1.z.string().max(20).optional())
+    // Outer `.optional()` — same cross-zod-minor robustness as
+    // `tolerantOptionalEmail` above (absent key passes on zod 4.3.x AND 4.4.x;
+    // null/"" → omitted; an over-long value still rejects).
+    .optional();
 // ── The contact-shape contract ───────────────────────────────────────────────
 const entityTypeEnum = zod_1.z.enum(index_1.ENTITY_TYPES);
 /**

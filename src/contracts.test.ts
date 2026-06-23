@@ -17,6 +17,7 @@
 // ============================================================================
 
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
 import {
   createLeadContactContract,
   tolerantOptionalEmail,
@@ -68,6 +69,16 @@ describe("tolerantOptionalPhone — the regression-lock core", () => {
 
   it("ACCEPTS a normal phone", () => {
     expect(tolerantOptionalPhone.parse("8015550142")).toBe("8015550142");
+  });
+
+  it("ACCEPTS an ABSENT key inside a z.object (cross-zod-minor robustness)", () => {
+    // zod 4.4.x regressed `z.preprocess(fn, inner.optional())` to reject an
+    // absent key in a z.object; the outer `.optional()` keeps it passing on
+    // every zod 4.x. Lock that here at the primitive level.
+    const obj = z.object({ phone: tolerantOptionalPhone });
+    expect(obj.safeParse({}).success).toBe(true);
+    const objE = z.object({ email: tolerantOptionalEmail });
+    expect(objE.safeParse({}).success).toBe(true);
   });
 
   it("REJECTS an over-long phone (>20 chars)", () => {

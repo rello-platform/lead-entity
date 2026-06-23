@@ -1,6 +1,6 @@
 {
   "name": "@rello-platform/lead-entity",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pure-function classifier + normalizer for Rello Lead entity-shape (LLC, partnership, trust, corporation, individual), PLUS the shared inter-app createLead CONTACT-shape contract (/contracts subpath — the regression-lock SOT for the contact-less-lead acceptance behavior). Consumed by Harvest-Home (BYOL/intake/merge writers), Rello (createLead validation + write-time fill), and the Phase 7 backfill script. Single source of truth for entity-name normalization across the platform.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
