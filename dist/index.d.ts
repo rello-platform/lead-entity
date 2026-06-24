@@ -33,6 +33,38 @@ export type EntityType = (typeof ENTITY_TYPES)[number];
  */
 export declare function normalizeEntityName(raw: string): string;
 /**
+ * Pure function. Computes the address-independent INDIVIDUAL-owner grouping key
+ * used to collapse one person's N county parcels onto a single owner-lead
+ * (mirroring how the entity key at {@link normalizeEntityName} collapses
+ * "X Investments LLC"). The key is:
+ *
+ *   normalize(firstName) | normalize(stripSuffix(lastName)) | normalize(mailingAddress)
+ *
+ * keyed on NAME + NORMALIZED MAILING ADDRESS (W-01 lock 2026-06-24) — NOT the
+ * property address (property address IN the key was the split cause), NOT name
+ * alone (name-alone over-merges different people).
+ *
+ * Returns `null` — meaning "this row does NOT group, treat as its own lead" —
+ * when ANY of:
+ *   - firstName is blank or initials-only (single letter ± trailing dot),
+ *   - lastName (after suffix strip) is blank or initials-only,
+ *   - mailingAddress is absent / blank / normalizes to empty.
+ *
+ * Guarding all three prevents collapsing no-name or no-mailing rows into one
+ * lead. Null/undefined/non-string inputs are treated as absent (no throw — this
+ * runs on the write path for every individual lead; a malformed value must
+ * degrade to "ungroupable", never abort the create).
+ *
+ * @param firstName      owner first name (from the split person name)
+ * @param lastName       owner last name (suffix stripped internally)
+ * @param mailingAddress the owner's mailing address — pre-formatted single
+ *                       string (street + city/state/zip), e.g. the
+ *                       column-mapper's mailAddress/mailCity/mailState/mailZip
+ *                       joined. Callers MUST source this from the same mapping
+ *                       seam (no hardcoded header names).
+ */
+export declare function normalizeOwnerGroupKey(firstName: string | null | undefined, lastName: string | null | undefined, mailingAddress: string | null | undefined): string | null;
+/**
  * Pure function. Inspects the raw name and returns the EntityType.
  * Order of checks (first match wins):
  *   1. LLC suffix variants → LLC

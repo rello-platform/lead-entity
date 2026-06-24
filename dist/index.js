@@ -14,6 +14,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PHONE_DIGIT_FLOOR = exports.EMAIL_SHAPE_REGEX = exports.isNeither = exports.isPhoneShaped = exports.isEmailShaped = exports.normalizeContactFields = exports.ENTITY_TYPES = void 0;
 exports.normalizeEntityName = normalizeEntityName;
+exports.normalizeOwnerGroupKey = normalizeOwnerGroupKey;
 exports.classifyEntityType = classifyEntityType;
 exports.shouldRequireSkipTrace = shouldRequireSkipTrace;
 exports.ENTITY_TYPES = [
@@ -65,6 +66,112 @@ function normalizeEntityName(raw) {
     s = s.replace(/\bcorporation\b/g, "corp");
     s = s.replace(/\s+/g, " ").trim();
     return s;
+}
+/**
+ * Name suffixes stripped from the LAST name before it enters the owner-group
+ * key, so "Dorsey Jr" and "Dorsey" produce the SAME key (a person and their
+ * own Jr/Sr/III variant across county records group as one owner). Mirrors the
+ * Harvest-Home column-mapper NAME_SUFFIXES set verbatim; kept LOCAL here so the
+ * package stays a pure, zero-HH-dependency module that both HH (intake/BYOL
+ * dedup) and Rello (the P3 owner-grouping backfill) import as the single source.
+ */
+const OWNER_GROUP_NAME_SUFFIXES = new Set([
+    "jr", "sr", "ii", "iii", "iv", "v",
+    "jr.", "sr.", "esq", "esq.", "md", "phd", "dds", "do",
+]);
+/**
+ * Strip trailing name suffixes (Jr/Sr/III/…) from a last-name string, returning
+ * the cleaned remainder. Pure + self-contained (no import from HH). Never strips
+ * the only token: "Jr" → "Jr" (a row whose last name is literally a suffix is
+ * not a real owner name and the caller's blank/initials guard handles it).
+ */
+function stripOwnerNameSuffix(name) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    while (parts.length > 1 &&
+        OWNER_GROUP_NAME_SUFFIXES.has(parts[parts.length - 1].replace(/\.$/, "").toLowerCase())) {
+        parts.pop();
+    }
+    return parts.join(" ");
+}
+/**
+ * Normalize ONE address/name component to a stable token: lowercase, expand
+ * `&` → " and ", strip punctuation, collapse internal whitespace, trim. Mirrors
+ * the punctuation/case discipline of {@link normalizeEntityName} so the
+ * owner-group key sorts in the same canonical space as the entity key.
+ */
+function normalizeOwnerComponent(raw) {
+    return raw
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+/**
+ * Returns `true` when a name token is blank or initials-only (a single letter,
+ * optionally with a trailing period). Such rows must NOT group — grouping on a
+ * blank or single-initial name would collapse unrelated owners into one lead.
+ */
+function isBlankOrInitial(token) {
+    const t = token.trim().replace(/\.$/, "");
+    return t.length <= 1;
+}
+/**
+ * Pure function. Computes the address-independent INDIVIDUAL-owner grouping key
+ * used to collapse one person's N county parcels onto a single owner-lead
+ * (mirroring how the entity key at {@link normalizeEntityName} collapses
+ * "X Investments LLC"). The key is:
+ *
+ *   normalize(firstName) | normalize(stripSuffix(lastName)) | normalize(mailingAddress)
+ *
+ * keyed on NAME + NORMALIZED MAILING ADDRESS (W-01 lock 2026-06-24) — NOT the
+ * property address (property address IN the key was the split cause), NOT name
+ * alone (name-alone over-merges different people).
+ *
+ * Returns `null` — meaning "this row does NOT group, treat as its own lead" —
+ * when ANY of:
+ *   - firstName is blank or initials-only (single letter ± trailing dot),
+ *   - lastName (after suffix strip) is blank or initials-only,
+ *   - mailingAddress is absent / blank / normalizes to empty.
+ *
+ * Guarding all three prevents collapsing no-name or no-mailing rows into one
+ * lead. Null/undefined/non-string inputs are treated as absent (no throw — this
+ * runs on the write path for every individual lead; a malformed value must
+ * degrade to "ungroupable", never abort the create).
+ *
+ * @param firstName      owner first name (from the split person name)
+ * @param lastName       owner last name (suffix stripped internally)
+ * @param mailingAddress the owner's mailing address — pre-formatted single
+ *                       string (street + city/state/zip), e.g. the
+ *                       column-mapper's mailAddress/mailCity/mailState/mailZip
+ *                       joined. Callers MUST source this from the same mapping
+ *                       seam (no hardcoded header names).
+ */
+function normalizeOwnerGroupKey(firstName, lastName, mailingAddress) {
+    const first = typeof firstName === "string" ? firstName.trim() : "";
+    const lastRaw = typeof lastName === "string" ? lastName.trim() : "";
+    const mailing = typeof mailingAddress === "string" ? mailingAddress.trim() : "";
+    if (!first || isBlankOrInitial(first))
+        return null;
+    if (!lastRaw)
+        return null;
+    const lastClean = stripOwnerNameSuffix(lastRaw);
+    if (!lastClean || isBlankOrInitial(lastClean))
+        return null;
+    // A last name that is ITSELF nothing but a bare suffix token ("Jr", "III")
+    // is not a real owner name — stripOwnerNameSuffix won't strip the sole token,
+    // so guard it here so such rows do NOT group.
+    if (OWNER_GROUP_NAME_SUFFIXES.has(lastClean.replace(/\.$/, "").toLowerCase())) {
+        return null;
+    }
+    if (!mailing)
+        return null;
+    const firstNorm = normalizeOwnerComponent(first);
+    const lastNorm = normalizeOwnerComponent(lastClean);
+    const mailingNorm = normalizeOwnerComponent(mailing);
+    if (!firstNorm || !lastNorm || !mailingNorm)
+        return null;
+    return `${firstNorm}|${lastNorm}|${mailingNorm}`;
 }
 const CLASSIFIER_RULES = [
     {

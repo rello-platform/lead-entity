@@ -3,6 +3,7 @@ import {
   ENTITY_TYPES,
   classifyEntityType,
   normalizeEntityName,
+  normalizeOwnerGroupKey,
   shouldRequireSkipTrace,
   type EntityType,
 } from "./index";
@@ -363,5 +364,79 @@ describe("EntityType type membership (compile-time)", () => {
   it("rejects values outside ENTITY_TYPES at compile time", () => {
     const valid: EntityType = "PARTNERSHIP";
     expect(ENTITY_TYPES).toContain(valid);
+  });
+});
+
+describe("normalizeOwnerGroupKey — W-01 (name + normalized mailing address)", () => {
+  it("groups same name + same mailing across different property addresses (one key)", () => {
+    const a = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo, UT 84601");
+    const b = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo, UT 84601");
+    expect(a).not.toBeNull();
+    expect(a).toBe(b);
+  });
+
+  it("does NOT group same name + DIFFERENT mailing (distinct keys)", () => {
+    const a = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo, UT 84601");
+    const b = normalizeOwnerGroupKey("John", "Smith", "200 Oak Ave, Orem, UT 84057");
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+
+  it("is stable across case / punctuation / whitespace / '&' variants", () => {
+    const a = normalizeOwnerGroupKey("John", "Smith", "100 Main St., Provo, UT 84601");
+    const b = normalizeOwnerGroupKey("  john ", " smith ", "100  main  st  Provo UT 84601");
+    expect(a).toBe(b);
+    const amp1 = normalizeOwnerGroupKey("Bob", "Jones", "1 A&B Plaza");
+    const amp2 = normalizeOwnerGroupKey("Bob", "Jones", "1 A and B Plaza");
+    expect(amp1).toBe(amp2);
+  });
+
+  it("strips name suffixes so 'Smith Jr' and 'Smith' group together", () => {
+    const a = normalizeOwnerGroupKey("John", "Smith Jr", "100 Main St, Provo");
+    const b = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo");
+    expect(a).toBe(b);
+    const c = normalizeOwnerGroupKey("John", "Smith III", "100 Main St, Provo");
+    expect(c).toBe(b);
+  });
+
+  it("returns null when firstName is blank or initials-only", () => {
+    expect(normalizeOwnerGroupKey("", "Smith", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("   ", "Smith", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("J", "Smith", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("J.", "Smith", "100 Main St")).toBeNull();
+  });
+
+  it("returns null when lastName is blank or initials-only (after suffix strip)", () => {
+    expect(normalizeOwnerGroupKey("John", "", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "  ", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "S", "100 Main St")).toBeNull();
+    // last name is literally a suffix → not stripped to empty, but single token → initials guard
+    expect(normalizeOwnerGroupKey("John", "Jr", "100 Main St")).toBeNull();
+  });
+
+  it("returns null when mailing address is absent / blank / non-alphanumeric", () => {
+    expect(normalizeOwnerGroupKey("John", "Smith", "")).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "Smith", "   ")).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "Smith", null)).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "Smith", undefined)).toBeNull();
+    expect(normalizeOwnerGroupKey("John", "Smith", "---")).toBeNull();
+  });
+
+  it("treats null/undefined/non-string name inputs as absent (no throw)", () => {
+    expect(normalizeOwnerGroupKey(null, "Smith", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey(undefined, "Smith", "100 Main St")).toBeNull();
+    expect(normalizeOwnerGroupKey("John", null, "100 Main St")).toBeNull();
+    // @ts-expect-error — runtime guard must hold even for wrong types
+    expect(normalizeOwnerGroupKey(42, "Smith", "100 Main St")).toBeNull();
+  });
+
+  it("different people with the SAME name + SAME mailing DO collapse (accepted W-01 residual)", () => {
+    // This is the documented accepted tradeoff — two genuinely different
+    // John Smiths sharing a mailing address group. Asserted so the behavior
+    // is intentional + locked, not an accident.
+    const a = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo, UT");
+    const b = normalizeOwnerGroupKey("John", "Smith", "100 Main St, Provo, UT");
+    expect(a).toBe(b);
   });
 });
