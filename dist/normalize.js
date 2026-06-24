@@ -17,28 +17,48 @@
  * validates. It is the preventive ("edge self-heal") layer.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * THE W-01 TWO-SIDED SAFETY RULE — auto-corruption must be STRUCTURALLY impossible
+ * TWO DISTINCT OPERATIONS (the safety design — auto-corruption is structurally
+ * impossible)
  * ────────────────────────────────────────────────────────────────────────────
- * A value moves into a target field ONLY when ALL THREE hold:
- *   (a) the value is shape-POSITIVE for the target field, AND
- *   (b) shape-NEGATIVE for the source field it currently occupies, AND
- *   (c) the target field is NOT already holding a shape-valid value of its own type.
- * If ANY of (a)/(b)/(c) is false, OR there are multiple candidates competing for
- * one field, OR the shape is ambiguous (positive for both fields) → the value is
- * LEFT AS-IS and an `escalate` action is emitted. We never overwrite a valid
- * value, and we never guess between two plausible candidates.
+ * (1) CLEAR provably-invalid values — ALWAYS SAFE, UNCONDITIONAL.
+ *     A value that is shape-INVALID for the field it currently occupies is
+ *     definitively NOT a valid value of that field's type, so it is nulled —
+ *     regardless of what any other field holds. A phone-shaped or word value in
+ *     the `email` field is provably not an email → clear it. A word / 2–3-digit
+ *     value in the `phone` field is provably not a phone → clear it. This can
+ *     NEVER corrupt data: we only remove a value that was never valid where it
+ *     sat. It is also what makes the dual-phone case recoverable — an
+ *     email-field-holding-a-phone gets cleared, the genuinely valid `phone`
+ *     value is kept, and the row validates.
+ *
+ * (2) MOVE per the W-01 TWO-SIDED RULE — CONSERVATIVE.
+ *     A value is relocated INTO a target field ONLY when ALL THREE hold:
+ *       (a) it is shape-POSITIVE for the target field, AND
+ *       (b) shape-NEGATIVE for the source field it came from (guaranteed by (1):
+ *           only cleared values are move candidates), AND
+ *       (c) the target field is NOT already holding a shape-valid value of its
+ *           own type AND no OTHER value is also competing for that same target.
+ *     If a value is shape-positive for a target that is already taken, or two
+ *     values compete for one empty target, or a value is shape-NEITHER (belongs
+ *     to no contact field) — it is NOT moved. A NEITHER value is simply gone
+ *     after the clear (it was garbage). A real-but-unplaceable value (e.g. an
+ *     orphaned second phone) is reported via an `escalate` action so a human can
+ *     see what was dropped. We NEVER overwrite a valid value and NEVER guess
+ *     between two plausible candidates.
+ *
+ * ORDER: clear-invalid FIRST, then move-per-rule into the now-empty targets.
  *
  * The confidence boundary (from the spec):
- *   | source shape           | sits in | target state              | action   |
- *   | PHONE (≥7 digits, no @) | email   | phone empty / non-phone   | heal→phone |
- *   | EMAIL (matches regex)  | phone   | email empty / non-email   | heal→email |
- *   | NEITHER ("Sandy")      | phone   | n/a                       | drop      |
- *   | NEITHER ("Sandy")      | email   | n/a                       | drop      |
- *   | shape-valid for its own field | —  | —                         | no-op    |
- *   | ambiguous / both-valid-for-both | — | —                        | escalate |
+ *   | value sits in | value shape   | other field state        | outcome           |
+ *   | email         | PHONE         | phone empty/cleared      | cleared→moved→phone|
+ *   | email         | PHONE         | phone already valid PHONE| cleared (escalate: orphan)|
+ *   | phone         | EMAIL         | email empty/cleared      | cleared→moved→email|
+ *   | phone         | EMAIL         | email already valid EMAIL| cleared (escalate: orphan)|
+ *   | email/phone   | NEITHER       | n/a                      | cleared (garbage)  |
+ *   | email/phone   | valid-for-own | —                        | no-op (kept)       |
  *
  * PURITY — no I/O, no side effects, deterministic. Re-running on an already-healed
- * input is a no-op (idempotent). Reuses the contract's email regex + ≥7-digit
+ * result is a no-op (idempotent). Reuses the contract's email regex + ≥7-digit
  * phone floor (Rule E — single source of truth; this module does NOT fork the
  * shape predicates the contract already owns).
  */
@@ -58,7 +78,7 @@ exports.normalizeContactFields = normalizeContactFields;
  */
 exports.EMAIL_SHAPE_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /**
- * The contract's phone floor (`contracts.ts:153-156`): ≥7 digits after stripping
+ * The contract's phone floor (`contracts.ts:158-160`): ≥7 digits after stripping
  * every non-digit. Country-agnostic by design — a `+44…` number stripped of
  * non-digits still clears 7 digits → PHONE shape. The W-01 rule additionally
  * requires the absence of "@" so an email is never mis-read as a phone.
@@ -114,47 +134,67 @@ function isNeither(value) {
 function classifyShape(s) {
     // EMAIL and PHONE are mutually exclusive by construction: `isPhoneShaped`
     // rejects any value containing "@", and `isEmailShaped` requires an "@". So a
-    // value is at most one of EMAIL / PHONE — never ambiguous *across the two
-    // shapes*. (Ambiguity in the ROUTING sense — a value that could legitimately
-    // belong to either field — is handled by the two-sided rule below, not here.)
+    // value is at most one of EMAIL / PHONE — never both.
     if (isEmailShaped(s))
         return "EMAIL";
     if (isPhoneShaped(s))
         return "PHONE";
     return "NEITHER";
 }
+/** The shape a given field legitimately holds. */
+const VALID_SHAPE_FOR = {
+    email: "EMAIL",
+    phone: "PHONE",
+};
+/** The field a given shape legitimately belongs to (NEITHER → none). */
+function targetFieldFor(shape) {
+    if (shape === "EMAIL")
+        return "email";
+    if (shape === "PHONE")
+        return "phone";
+    return undefined;
+}
 /**
  * Shape-based contact-field normalizer (Layer 2 of Self-Healing Import Validation).
  *
  * Routes each of `email` / `phone` to the field its SHAPE belongs to, regardless
- * of which source column it arrived in — but ONLY when the W-01 two-sided safety
- * rule makes the destination UNAMBIGUOUS. Auto-corruption is structurally
- * impossible: a shape-valid value is never overwritten or dropped, and nothing is
- * moved unless it is shape-positive for the target AND shape-negative for its
- * source AND the target is not already holding a valid value of its own type.
+ * of which source column it arrived in, via two operations applied IN ORDER:
+ *
+ *   (1) CLEAR every value that is shape-invalid for the field it sits in
+ *       (unconditional — always safe; only removes data that was never valid
+ *       there). This frees up target fields and is what makes the dual-phone
+ *       case recoverable.
+ *   (2) MOVE each cleared, shape-valid value into the field its shape belongs to
+ *       — but ONLY when that target is now empty AND no other value competes for
+ *       it (the W-01 two-sided rule). Otherwise the value is left absent and an
+ *       `escalate` action records that a real value could not be safely placed.
+ *
+ * Auto-corruption is structurally impossible: a value that is shape-VALID for the
+ * field it occupies is NEVER cleared, moved, or overwritten; nothing lands in a
+ * target unless that target was empty and uncontested.
  *
  * Deterministic and idempotent — re-running on an already-healed result is a
  * no-op. No I/O, no side effects.
  *
- * @example phone-in-email + empty phone → heals to phone
+ * @example phone-in-email + empty phone → cleared from email, moved to phone
  *   normalizeContactFields({ email: "8015551234", phone: "" })
- *   // → { phone: "8015551234", healActions: [{ kind: "move", from: "email", to: "phone", … }] }
+ *   // → { phone: "8015551234", healActions: [{ action: "cleared", field: "email", … }, { action: "moved", field: "email", to: "phone", … }] }
  *
  * @example both columns swapped → double-swap heal
  *   normalizeContactFields({ email: "8015551234", phone: "jane@x.com" })
- *   // → { email: "jane@x.com", phone: "8015551234", healActions: [2 moves] }
+ *   // → { email: "jane@x.com", phone: "8015551234", healActions: [2 cleared, 2 moved] }
  *
- * @example target already valid → NEVER overwrite; escalate
+ * @example dual-phone (phone in email, valid phone in phone) → email cleared, phone kept, VALIDATES
  *   normalizeContactFields({ email: "8015551234", phone: "8015550000" })
- *   // → left as-is (email field still holds the phone-shaped value), 1 escalate
+ *   // → { phone: "8015550000", healActions: [{ action: "cleared", field: "email", … }, { action: "escalate", field: "email", reason: orphan }] }
  *
- * @example city in phone → drop, never invent
+ * @example city in phone → cleared, never invented elsewhere
  *   normalizeContactFields({ email: "jane@x.com", phone: "Sandy" })
- *   // → { email: "jane@x.com", healActions: [{ kind: "drop", from: "phone", … }] }
+ *   // → { email: "jane@x.com", healActions: [{ action: "cleared", field: "phone", valueShape: "NEITHER", … }] }
  */
 function normalizeContactFields(input) {
-    // Defensive: a non-object input cannot be normalized. Return an empty,
-    // safe result rather than throwing into a hot import path.
+    // Defensive: a non-object input cannot be normalized. Return an empty, safe
+    // result rather than throwing into a hot import path.
     const src = input && typeof input === "object" ? input : {};
     // Pass through every key that is NOT email/phone, untouched.
     const passthrough = {};
@@ -163,106 +203,102 @@ function normalizeContactFields(input) {
             passthrough[key] = src[key];
         }
     }
-    const emailRaw = toStr(src.email); // present, trimmed, non-empty — or undefined
-    const phoneRaw = toStr(src.phone);
-    const emailShape = emailRaw === undefined ? "ABSENT" : classifyShape(emailRaw);
-    const phoneShape = phoneRaw === undefined ? "ABSENT" : classifyShape(phoneRaw);
+    const fields = ["email", "phone"];
+    // Per-field current value (trimmed-non-empty string or undefined) + shape.
+    const raw = {
+        email: toStr(src.email),
+        phone: toStr(src.phone),
+    };
+    const shape = {
+        email: raw.email === undefined ? "ABSENT" : classifyShape(raw.email),
+        phone: raw.phone === undefined ? "ABSENT" : classifyShape(raw.phone),
+    };
     const healActions = [];
-    // Resolved outputs. We build them up by routing; default = leave where it is.
-    let outEmail = emailShape === "EMAIL" ? emailRaw : undefined;
-    let outPhone = phoneShape === "PHONE" ? phoneRaw : undefined;
-    // ── Decide the fate of the value sitting in the EMAIL column ───────────────
-    // It is only a HEAL CANDIDATE for `phone` if it is shape-NEGATIVE for email
-    // (clause b) and shape-POSITIVE for phone (clause a).
-    if (emailShape === "PHONE") {
-        // Phone-shaped value in the email column. Wants to move to `phone`.
-        // Clause (c): phone must NOT already hold a shape-valid (PHONE) value, and
-        // there must be exactly ONE candidate for the phone slot.
-        const phoneSlotHasValid = phoneShape === "PHONE";
-        if (phoneSlotHasValid) {
-            // Two-sided rule fails clause (c): would overwrite a valid phone. NEVER
-            // overwrite — and we now have two phone-shaped candidates for one slot.
-            healActions.push({
-                kind: "escalate",
-                field: "email",
-                value: emailRaw,
-                valueShape: "PHONE",
-                reason: "phone-shaped value in email column, but phone field already holds a valid phone — refusing to overwrite (two competing phone candidates)",
-            });
-            // Leave the email-column value AS-IS (do not move, do not drop).
-            outEmail = emailRaw;
-        }
-        else {
-            // Clause (c) holds (phone slot empty or non-phone). Safe to move.
-            // If the phone slot held a NEITHER value it will be dropped below; if it
-            // held an EMAIL value, that email moves to the email slot below. Either
-            // way the phone slot is free for this move.
-            outPhone = emailRaw;
-            healActions.push({
-                kind: "move",
-                from: "email",
-                to: "phone",
-                value: emailRaw,
-                valueShape: "PHONE",
-            });
-        }
-    }
-    else if (emailShape === "NEITHER") {
-        // A non-contact value (city/garbage) in the email column. Drop it — never
-        // promote a non-contact string into another field.
+    // Resolved output values; start with "kept iff shape-valid-in-place".
+    const out = {
+        email: shape.email === VALID_SHAPE_FOR.email ? raw.email : undefined,
+        phone: shape.phone === VALID_SHAPE_FOR.phone ? raw.phone : undefined,
+    };
+    const moveCandidates = [];
+    for (const field of fields) {
+        const s = shape[field];
+        if (s === "ABSENT")
+            continue; // nothing present in this field
+        if (s === VALID_SHAPE_FOR[field])
+            continue; // shape-valid in place → KEEP
+        // Shape-INVALID for the field it occupies → provably not a valid value of
+        // this field's type → clear (always correct).
+        const value = raw[field];
         healActions.push({
-            kind: "drop",
-            from: "email",
-            value: emailRaw,
-            valueShape: "NEITHER",
+            action: "cleared",
+            kind: "cleared",
+            field,
+            value,
+            valueShape: s,
         });
-        // outEmail stays undefined.
-    }
-    // emailShape === "EMAIL" → stays in email (no-op, outEmail already set).
-    // emailShape === "ABSENT" → nothing to do.
-    // ── Decide the fate of the value sitting in the PHONE column ───────────────
-    if (phoneShape === "EMAIL") {
-        // Email-shaped value in the phone column. Wants to move to `email`.
-        // Clause (c): email must NOT already hold a shape-valid (EMAIL) value.
-        const emailSlotHasValid = emailShape === "EMAIL";
-        if (emailSlotHasValid) {
-            healActions.push({
-                kind: "escalate",
-                field: "phone",
-                value: phoneRaw,
-                valueShape: "EMAIL",
-                reason: "email-shaped value in phone column, but email field already holds a valid email — refusing to overwrite (two competing email candidates)",
-            });
-            // Leave the phone-column value AS-IS.
-            outPhone = phoneRaw;
-        }
-        else {
-            outEmail = phoneRaw;
-            healActions.push({
-                kind: "move",
-                from: "phone",
-                to: "email",
-                value: phoneRaw,
-                valueShape: "EMAIL",
-            });
+        // out[field] is already undefined (only shape-valid values seeded it).
+        // A cleared value that is a real contact value of the OTHER field's shape is
+        // a move candidate. (A NEITHER value belongs to no field → discarded.)
+        if (s === "EMAIL" || s === "PHONE") {
+            moveCandidates.push({ value, shape: s, from: field });
         }
     }
-    else if (phoneShape === "NEITHER") {
+    // ── OPERATION (2): MOVE each candidate into the field its shape belongs to,
+    // under the W-01 two-sided rule. A target accepts a move ONLY when it is empty
+    // (after the clear) AND exactly ONE candidate wants it. Competing candidates,
+    // or a target still holding a shape-valid value, → escalate (never overwrite,
+    // never guess).
+    for (const target of fields) {
+        const wanting = moveCandidates.filter((c) => targetFieldFor(c.shape) === target);
+        if (wanting.length === 0)
+            continue;
+        if (out[target] !== undefined) {
+            // Target already holds a shape-valid value of its own type → NEVER
+            // overwrite. Every candidate for it is a real-but-unplaceable orphan.
+            for (const c of wanting) {
+                healActions.push({
+                    action: "escalate",
+                    kind: "escalate",
+                    field: c.from,
+                    value: c.value,
+                    valueShape: c.shape,
+                    reason: `${c.shape.toLowerCase()}-shaped value found in the ${c.from} column, but the ${target} field already holds a valid ${target} — refusing to overwrite (orphaned ${target} candidate, needs human review)`,
+                });
+            }
+            continue;
+        }
+        if (wanting.length > 1) {
+            // Two+ candidates compete for one empty target → ambiguous; never guess
+            // which wins. Escalate all of them; leave the target empty.
+            for (const c of wanting) {
+                healActions.push({
+                    action: "escalate",
+                    kind: "escalate",
+                    field: c.from,
+                    value: c.value,
+                    valueShape: c.shape,
+                    reason: `multiple ${c.shape.toLowerCase()}-shaped values compete for the single ${target} field — refusing to guess which is correct (needs human review)`,
+                });
+            }
+            continue;
+        }
+        // Exactly one candidate, target empty → safe two-sided move.
+        const c = wanting[0];
+        out[target] = c.value;
         healActions.push({
-            kind: "drop",
-            from: "phone",
-            value: phoneRaw,
-            valueShape: "NEITHER",
+            action: "moved",
+            kind: "moved",
+            field: c.from,
+            to: target,
+            value: c.value,
+            valueShape: c.shape,
         });
-        // outPhone stays undefined.
     }
-    // phoneShape === "PHONE" → stays in phone (no-op, outPhone already set).
-    // phoneShape === "ABSENT" → nothing to do.
     // ── Build the result. Omit absent fields (never emit empty strings). ───────
     const result = { ...passthrough, healActions };
-    if (outEmail !== undefined)
-        result.email = outEmail;
-    if (outPhone !== undefined)
-        result.phone = outPhone;
+    if (out.email !== undefined)
+        result.email = out.email;
+    if (out.phone !== undefined)
+        result.phone = out.phone;
     return result;
 }
