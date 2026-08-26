@@ -440,3 +440,85 @@ describe("normalizeOwnerGroupKey — W-01 (name + normalized mailing address)", 
     expect(a).toBe(b);
   });
 });
+
+// ===========================================================================
+// LEGAL-FORM SUFFIX AUDIT (2026-08-26)
+// ===========================================================================
+//
+// Found by a dry run of the SegoLily import: 121 rows for ONE company —
+// "Micek Investments, Ltd" — classified INDIVIDUAL, so they got no entity key,
+// and because `computeOwnerGroupKey` refuses a name with no first name they got
+// no owner key either. Structurally undedupable: 121 separate leads for one
+// business, each nurtured in parallel.
+//
+// These tests pin BOTH halves: the forms that must now classify, and the
+// ordinary-surname tokens that must NOT — the second is the dangerous direction,
+// because a person misclassified as an entity loses their owner grouping and
+// their individual handling, silently.
+
+describe("legal-form suffixes the audit found missing", () => {
+  it.each([
+    ["Micek Investments, Ltd", "CORPORATION"],
+    ["Willowood Investments, Ltd", "CORPORATION"],
+    ["Acme Ltd.", "CORPORATION"],
+    ["Acme Limited", "CORPORATION"],
+    ["Smith & Jones LLP", "PARTNERSHIP"],
+    ["Smith & Jones L.L.P.", "PARTNERSHIP"],
+    ["Acme Partnership", "PARTNERSHIP"],
+    ["Dr Smith PLLC", "LLC"],
+    ["Dr Smith P.L.L.C.", "LLC"],
+    ["Dr Smith PC", "CORPORATION"],
+  ])("classifies %s as %s", (name, expected) => {
+    expect(classifyEntityType(name)).toBe(expected);
+  });
+});
+
+describe("the forms that already worked keep working", () => {
+  it.each([
+    ["Premium Capital Invest Llc", "LLC"],
+    ["Reid Ventures, LLC", "LLC"],
+    ["Sandy Irrigation Canal Co", "CORPORATION"],
+    ["Smith & Sons Inc.", "CORPORATION"],
+    ["Smith Family Trust", "TRUST"],
+    ["Acme LP", "PARTNERSHIP"],
+    ["Acme Holdings", "OTHER"],
+  ])("classifies %s as %s", (name, expected) => {
+    expect(classifyEntityType(name)).toBe(expected);
+  });
+});
+
+// ⚑ ORDER. The bare `ltd` / `limited` tokens added to the CORPORATION rule must
+// not steal the two compounds that mean something else.
+describe("the compound forms still beat the bare tokens", () => {
+  it("'Smith Limited Liability Company' is an LLC, not a corporation", () => {
+    expect(classifyEntityType("Smith Limited Liability Company")).toBe("LLC");
+  });
+  it("'Smith Ltd Partnership' is a partnership, not a corporation", () => {
+    expect(classifyEntityType("Smith Ltd Partnership")).toBe("PARTNERSHIP");
+  });
+  it("'Smith Limited Partnership' is a partnership, not a corporation", () => {
+    expect(classifyEntityType("Smith Limited Partnership")).toBe("PARTNERSHIP");
+  });
+});
+
+// ⚑ THE DANGEROUS DIRECTION. These are ordinary people. Classifying one as an
+// entity strips its owner-grouping key and its individual handling, and nothing
+// reports it. Every token below was a CANDIDATE in the audit and was rejected
+// for exactly this reason.
+describe("ordinary names are never reclassified as entities", () => {
+  it.each([
+    "Allison Evans",
+    "Rich Church",           // `church` was a candidate token
+    "Mary Estate",           // `estate` — collides with "Real Estate"
+    "David Parsons",
+    "Jane Capital",          // `capital` was a candidate token
+    "Robert Realty",         // `realty` was a candidate token
+    "Susan Partners",        // `partners` (plural) is not `partnership`
+    "Tom Associates",
+    "Linda Ventures",
+    "Investments Family",    // `investments` was a candidate token
+    "Properties Jones",
+  ])("'%s' stays INDIVIDUAL", (name) => {
+    expect(classifyEntityType(name)).toBe("INDIVIDUAL");
+  });
+});

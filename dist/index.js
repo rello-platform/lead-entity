@@ -173,13 +173,42 @@ function normalizeOwnerGroupKey(firstName, lastName, mailingAddress) {
         return null;
     return `${firstNorm}|${lastNorm}|${mailingNorm}`;
 }
+/**
+ * ⚑ LEGAL-FORM SUFFIXES ONLY — read this before adding a token.
+ *
+ * Every pattern here is a REGISTERED LEGAL FORM (llc, ltd, llp, inc, …), not a
+ * descriptive business noun. That line is deliberate and load-bearing: an
+ * audit of this classifier (2026-08-26) found it missing 22 candidate tokens,
+ * and roughly half of them are words that are ALSO ordinary surnames or common
+ * name parts — `church`, `rich`, `parsons`, `estate` (as in "Smith Real
+ * Estate"), `capital`, `realty`, `associates`. Adding those would silently
+ * reclassify real people as entities, which is the failure mode this classifier
+ * exists to avoid and is far worse than missing a company: a misclassified
+ * person loses their owner-grouping key and their individual handling.
+ *
+ * The tokens deliberately NOT added, and why:
+ *   investments · properties · realty · capital · management · associates ·
+ *   ventures · partners · church · association · authority · district ·
+ *   city of · county   → descriptive nouns / common surnames, not legal forms.
+ *   estate            → collides with "Real Estate" in ordinary business names.
+ * If one of those must be recognised, it needs its own rule with surrounding
+ * context, not a bare token.
+ *
+ * ⚑ ORDER IS LOAD-BEARING. First match wins, so the narrow compounds must
+ * precede the bare tokens they contain:
+ *   "Smith Limited Liability Company" → rule 1 (LLC), not rule 4 via `limited`
+ *   "Smith Ltd Partnership"           → rule 2 (PARTNERSHIP), not rule 4
+ *   "Micek Investments, Ltd"          → rule 4 (CORPORATION)
+ */
 const CLASSIFIER_RULES = [
     {
-        pattern: /\b(llc|l\.l\.c\.?|l\s+l\s+c|limited\s+liability\s+(company|co))\b/,
+        // `pllc` (professional LLC) is one token — `\bllc\b` does NOT match inside
+        // it, which is why it was missed until measured.
+        pattern: /\b(llc|l\.l\.c\.?|l\s+l\s+c|pllc|p\.l\.l\.c\.?|limited\s+liability\s+(company|co))\b/,
         type: "LLC",
     },
     {
-        pattern: /\b(limited\s+partnership|ltd\s+partnership|limited\s+ptnrship|ltd\s+ptnrship|family\s+limited\s+partnership|l\s+p|lp)\b/,
+        pattern: /\b(limited\s+partnership|ltd\s+partnership|limited\s+ptnrship|ltd\s+ptnrship|family\s+limited\s+partnership|llp|l\.l\.p\.?|lllp|partnership|l\s+p|lp)\b/,
         type: "PARTNERSHIP",
     },
     {
@@ -187,7 +216,12 @@ const CLASSIFIER_RULES = [
         type: "TRUST",
     },
     {
-        pattern: /\b(incorporated|incorp|inc|corporation|corp|company|co)\b/,
+        // `ltd` / `limited` land here rather than in LLC: a "Limited" company is a
+        // corporation in every jurisdiction that uses the suffix. The two compound
+        // forms that mean something else (limited liability company, limited
+        // partnership) are already claimed by rules 1 and 2 above.
+        // `pc` = professional corporation.
+        pattern: /\b(incorporated|incorp|inc|corporation|corp|company|co|ltd|limited|pc|p\.c\.?)\b/,
         type: "CORPORATION",
     },
     {
