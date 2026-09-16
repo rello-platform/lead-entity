@@ -28,7 +28,8 @@
     "compile": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run compile"
+    "prepublishOnly": "npm run compile",
+    "hooks": "git config core.hooksPath .husky || true"
   },
   "peerDependencies": {
     "zod": "^4.0.0"
